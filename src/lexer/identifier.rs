@@ -26,6 +26,7 @@ impl super::Lexer {
             "const" => TokenType::Const,
             "true" => TokenType::BoolLiteral(true),
             "false" => TokenType::BoolLiteral(false),
+            "null" => TokenType::Null,
             "and" => TokenType::And,
             "or" => TokenType::Or,
             "not" => TokenType::Not,

@@ -10,6 +10,20 @@ use super::Parser;
 
 impl Parser {
     pub(crate) fn parse_type(&mut self) -> Result<KairoType> {
+        let mut base_type = self.parse_base_type()?;
+        
+        // 检查是否有 ? 表示可空类型
+        if let Some(token) = self.current_token() {
+            if matches!(token.token_type, TokenType::Question) {
+                self.advance();
+                base_type = KairoType::Nullable(Box::new(base_type));
+            }
+        }
+        
+        Ok(base_type)
+    }
+    
+    fn parse_base_type(&mut self) -> Result<KairoType> {
         if let Some(token) = self.current_token() {
             let (token_type, line, column) = (token.token_type.clone(), token.line, token.column);
             match &token_type {
@@ -24,15 +38,15 @@ impl Parser {
                         "Unit" => Ok(KairoType::Unit),
                         "List" => {
                             self.consume(TokenType::LeftBracket, "期望 '['")?;
-                            let inner_type = self.parse_type()?;
+                            let inner_type = self.parse_base_type()?;
                             self.consume(TokenType::RightBracket, "期望 ']'")?;
                             Ok(KairoType::List(Box::new(inner_type)))
                         }
                         "Map" => {
                             self.consume(TokenType::LeftBracket, "期望 '['")?;
-                            let key_type = self.parse_type()?;
+                            let key_type = self.parse_base_type()?;
                             self.consume(TokenType::Arrow, "期望 '->'")?;
-                            let value_type = self.parse_type()?;
+                            let value_type = self.parse_base_type()?;
                             self.consume(TokenType::RightBracket, "期望 ']'")?;
                             Ok(KairoType::Map(Box::new(key_type), Box::new(value_type)))
                         }
@@ -44,11 +58,11 @@ impl Parser {
                     self.advance();
                     let mut types = Vec::new();
                     if !self.check(&TokenType::RightParen) {
-                        types.push(self.parse_type()?);
+                        types.push(self.parse_base_type()?);
                         while self.check(&TokenType::Comma) {
                             self.advance();
                             if self.check(&TokenType::RightParen) { break; }
-                            types.push(self.parse_type()?);
+                            types.push(self.parse_base_type()?);
                         }
                     }
                     self.consume(TokenType::RightParen, "期望 ')'")?;
@@ -57,7 +71,14 @@ impl Parser {
                 _ => Err(KairoError::syntax("期望类型名".to_string(), line, column)),
             }
         } else {
-            Err(KairoError::syntax("期望类型名".to_string(), 1, 1))
+            // 如果没有当前token，尝试从上一个token获取位置，或者使用默认位置
+        let (line, column) = if self.current > 0 && self.current <= self.tokens.len() {
+            let prev_token = &self.tokens[self.current - 1];
+            (prev_token.line, prev_token.column)
+        } else {
+            (1, 1)
+        };
+        Err(KairoError::syntax("期望类型名".to_string(), line, column))
         }
     }
 }

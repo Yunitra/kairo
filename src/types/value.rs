@@ -27,6 +27,8 @@ pub enum KairoValue {
         return_type: KairoType,
     },
     Unit,
+    /// 空值
+    Null,
 }
 
 impl KairoValue {
@@ -62,6 +64,7 @@ impl KairoValue {
                 }
             }
             KairoValue::Unit => KairoType::Unit,
+            KairoValue::Null => KairoType::Nullable(Box::new(KairoType::Unit)),
         }
     }
 
@@ -77,6 +80,7 @@ impl KairoValue {
             KairoValue::Tuple(t) => !t.is_empty(),
             KairoValue::Function { .. } => true,
             KairoValue::Unit => false,
+            KairoValue::Null => false,
         }
     }
 }
@@ -121,6 +125,7 @@ impl std::fmt::Display for KairoValue {
                 write!(f, ") -> {}", return_type)
             }
             KairoValue::Unit => write!(f, "()"),
+            KairoValue::Null => write!(f, "null"),
         }
     }
 }

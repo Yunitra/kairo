@@ -25,8 +25,8 @@ impl super::Interpreter {
     pub(super) fn push_scope(&mut self) { self.scopes.push(Scope::new()); }
     pub(super) fn pop_scope(&mut self) { if self.scopes.len() > 1 { self.scopes.pop(); } }
 
-    pub(super) fn set_variable(&mut self, name: String, value: KairoValue, mutable: bool) -> Result<()> {
-        if let Some(scope) = self.scopes.last_mut() { scope.variables.insert(name, (value, mutable)); Ok(()) } else { Err(KairoError::runtime("没有可用的作用域".to_string(), 1, 1)) }
+    pub(super) fn set_variable(&mut self, name: String, value: KairoValue, mutable: bool, line: usize, column: usize) -> Result<()> {
+        if let Some(scope) = self.scopes.last_mut() { scope.variables.insert(name, (value, mutable)); Ok(()) } else { Err(KairoError::runtime("没有可用的作用域".to_string(), line, column)) }
     }
 
     pub(super) fn get_variable(&self, name: &str) -> Option<(KairoValue, bool)> {
@@ -34,18 +34,18 @@ impl super::Interpreter {
         None
     }
 
-    pub(super) fn update_variable(&mut self, name: &str, value: KairoValue) -> Result<()> {
+    pub(super) fn update_variable(&mut self, name: &str, value: KairoValue, line: usize, column: usize) -> Result<()> {
         for scope in self.scopes.iter_mut().rev() {
             if let Some((stored_value, mutable)) = scope.variables.get_mut(name) {
-                if !*mutable { return Err(KairoError::runtime(format!("尝试修改不可变变量: {}", name), 1, 1)); }
+                if !*mutable { return Err(KairoError::runtime(format!("尝试修改不可变变量: {}", name), line, column)); }
                 *stored_value = value; return Ok(());
             }
         }
-        Err(KairoError::runtime(format!("未定义的变量: {}", name), 1, 1))
+        Err(KairoError::runtime(format!("未定义的变量: {}", name), line, column))
     }
 
-    pub(super) fn set_function(&mut self, name: String, function: FunctionDef) -> Result<()> {
-        if let Some(scope) = self.scopes.last_mut() { scope.functions.insert(name, function); Ok(()) } else { Err(KairoError::runtime("没有可用的作用域".to_string(), 1, 1)) }
+    pub(super) fn set_function(&mut self, name: String, function: FunctionDef, line: usize, column: usize) -> Result<()> {
+        if let Some(scope) = self.scopes.last_mut() { scope.functions.insert(name, function); Ok(()) } else { Err(KairoError::runtime("没有可用的作用域".to_string(), line, column)) }
     }
 
     pub(super) fn get_function(&self, name: &str) -> Option<FunctionDef> {

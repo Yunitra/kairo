@@ -3,6 +3,7 @@
 //! 赋值与自增自减解析
 
 use crate::ast::{AssignmentOperator, Expression};
+use crate::ast::expression::{ExpressionKind};
 use crate::error::{KairoError, Result};
 use crate::lexer::TokenType;
 
@@ -25,7 +26,14 @@ impl Parser {
                 ));
             }
         } else {
-            return Err(KairoError::syntax("期望变量名".to_string(), 1, 1));
+            // 如果没有当前token，尝试从上一个token获取位置，或者使用默认位置
+            let (line, column) = if self.current > 0 && self.current <= self.tokens.len() {
+                let prev_token = &self.tokens[self.current - 1];
+                (prev_token.line, prev_token.column)
+            } else {
+                (1, 1)
+            };
+            return Err(KairoError::syntax("期望变量名".to_string(), line, column));
         };
         
         let (operator, op_line, _op_column) = if let Some(token) = self.current_token() {
@@ -45,17 +53,22 @@ impl Parser {
             self.advance();
             (op, op_line, op_column)
         } else {
-            return Err(KairoError::syntax("期望赋值操作符".to_string(), 1, 1));
+            // 如果没有当前token，尝试从上一个token获取位置，或者使用默认位置
+            let (line, column) = if self.current > 0 && self.current <= self.tokens.len() {
+                let prev_token = &self.tokens[self.current - 1];
+                (prev_token.line, prev_token.column)
+            } else {
+                (1, 1)
+            };
+            return Err(KairoError::syntax("期望赋值操作符".to_string(), line, column));
         };
         
         let value = self.parse_expression()?;
         
-        Ok(crate::ast::Statement::Expression(Expression::Assignment {
-            target,
-            operator,
-            value: Box::new(value),
+        Ok(crate::ast::Statement { kind: crate::ast::StatementKind::Expression(Expression {
+            kind: ExpressionKind::Assignment { target, operator, value: Box::new(value) },
             line: id_line.min(op_line),
             column: id_column,
-        }))
+        }), line: id_line.min(op_line), column: id_column })
     }
 }

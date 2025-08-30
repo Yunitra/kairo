@@ -8,7 +8,14 @@ use super::common::{Block, MatchArm, Parameter};
 use super::expression::Expression;
 
 #[derive(Debug, Clone)]
-pub enum Statement {
+pub struct Statement {
+    pub kind: StatementKind,
+    pub line: usize,
+    pub column: usize,
+}
+
+#[derive(Debug, Clone)]
+pub enum StatementKind {
     /// 变量或常量声明
     VariableDeclaration {
         name: String,
@@ -27,8 +34,6 @@ pub enum Statement {
         body: Option<Block>,
         /// 单表达式函数体（可选）
         body_expr: Option<Expression>,
-        line: usize,
-        column: usize,
     },
 
     /// 扩展函数声明（Type.method）
@@ -39,16 +44,10 @@ pub enum Statement {
         return_type: Option<KairoType>,
         body: Option<Block>,
         body_expr: Option<Expression>,
-        line: usize,
-        column: usize,
     },
 
     /// 返回语句
-    Return {
-        value: Option<Expression>,
-        line: usize,
-        column: usize,
-    },
+    Return { value: Option<Expression> },
 
     /// 表达式语句
     Expression(Expression),
@@ -62,10 +61,7 @@ pub enum Statement {
     },
 
     /// while 语句
-    While {
-        condition: Expression,
-        body: Block,
-    },
+    While { condition: Expression, body: Block },
 
     /// for 语句
     For {
@@ -76,10 +72,7 @@ pub enum Statement {
     },
 
     /// match 语句
-    Match {
-        value: Expression,
-        arms: Vec<MatchArm>,
-    },
+    Match { value: Expression, arms: Vec<MatchArm> },
 
     /// break 语句（可带层数）
     Break { levels: Option<usize> },

@@ -83,7 +83,7 @@ impl super::Interpreter {
 
             self.push_scope();
             for ((param_name, _t, mutable, _d, _v), arg_value) in function.parameters.iter().zip(final_arg_values.iter()) {
-                self.set_variable(param_name.clone(), arg_value.clone(), *mutable)?;
+                self.set_variable(param_name.clone(), arg_value.clone(), *mutable, line, column)?;
             }
 
             let (result, return_line, return_column) = match &function.body {

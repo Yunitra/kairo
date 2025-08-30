@@ -15,6 +15,7 @@ pub enum TokenType {
     Const,
     True,
     False,
+    Null,
     And,
     Or,
     Not,
@@ -52,9 +53,9 @@ pub enum TokenType {
     DotDot,          // ..
     DotDotEqual,     // ..=
     PipeArrow,       // |>  管道操作符
-    Underscore,      // _  占位符
+    Underscore,      // _   占位符
     Ellipsis,        // ... 可变参数标记
-    Dot,             // .  点号
+    Dot,             // .   点号
 
     // 分隔符
     LeftParen,       // (
@@ -67,11 +68,15 @@ pub enum TokenType {
     Colon,           // :
     Arrow,           // ->
     Exclamation,     // !
+    Question,        // ?
+    Dollar,          // $
+    SafeCall,        // ?.
+    Elvis,           // ?:
 
     // 注释
-    SingleComment(String),    // # comment
-    MultiComment(String),     // --- comment ---
-    DocComment(String),       // ** comment
+    SingleComment(String),    // # 单行注释
+    MultiComment(String),     // --- 多行注释 ---
+    DocComment(String),       // ** 文档注释
 
     // 特殊
     Newline,
@@ -84,5 +89,3 @@ pub struct Token {
     pub line: usize,
     pub column: usize,
 }
-
-

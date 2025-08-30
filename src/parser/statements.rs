@@ -2,7 +2,7 @@
 
 //! 语句解析
 
-use crate::ast::{Statement, Block, MatchArm, Program};
+use crate::ast::{Statement, StatementKind, Block, MatchArm, Program};
 use crate::error::{KairoError, Result};
 use crate::lexer::TokenType;
 
@@ -32,22 +32,24 @@ impl Parser {
                 TokenType::For => { return self.parse_for_statement(); }
                 TokenType::Match => { return self.parse_match_statement(); }
                 TokenType::Break => { return self.parse_break_statement(); }
-                TokenType::Continue => { self.advance(); return Ok(Statement::Continue); }
+                TokenType::Continue => { let t = token.clone(); self.advance(); return Ok(Statement { kind: StatementKind::Continue, line: t.line, column: t.column }); }
                 TokenType::LeftBrace => { return self.parse_block_statement(); }
                 TokenType::Identifier(_) => {
                     if let Some(next_token) = self.tokens.get(self.current + 1) {
                         match &next_token.token_type {
-                            TokenType::Assign | TokenType::Exclamation | TokenType::Colon => { return self.parse_variable_declaration(); }
+                            TokenType::Assign | TokenType::Exclamation | TokenType::Colon | TokenType::Question => { return self.parse_variable_declaration(); }
                             TokenType::PlusAssign | TokenType::MinusAssign | TokenType::MultiplyAssign | TokenType::DivideAssign => { return self.parse_assignment_statement(); }
                             _ => {}
                         }
                     }
                 }
+                TokenType::Dollar => { return self.parse_variable_declaration(); }
                 _ => {}
             }
         }
         let expr = self.parse_expression()?;
-        Ok(Statement::Expression(expr))
+        let (line, column) = self.current_token().map(|t| (t.line, t.column)).unwrap_or((1,1));
+        Ok(Statement { kind: StatementKind::Expression(expr), line, column })
     }
 
     pub(crate) fn parse_const_declaration(&mut self) -> Result<Statement> {
@@ -55,28 +57,105 @@ impl Parser {
         let (name, _line, _column) = if let Some(token) = self.current_token() {
             if let TokenType::Identifier(name) = &token.token_type { let name = name.clone(); let line = token.line; let column = token.column; self.advance(); (name, line, column) }
             else { return Err(KairoError::syntax("期望常量名".to_string(), token.line, token.column)); }
-        } else { return Err(KairoError::syntax("期望常量名".to_string(), 1, 1)); };
+        } else { 
+            // 如果没有当前token，尝试从上一个token获取位置，或者使用默认位置
+            let (line, column) = if self.current > 0 && self.current <= self.tokens.len() {
+                let prev_token = &self.tokens[self.current - 1];
+                (prev_token.line, prev_token.column)
+            } else {
+                (1, 1)
+            };
+            return Err(KairoError::syntax("期望常量名".to_string(), line, column)); 
+        };
         self.consume(TokenType::Assign, "期望 '='")?;
         let value = self.parse_expression()?;
-        Ok(Statement::VariableDeclaration { name, mutable: false, explicit_type: None, value, is_const: true })
+        // 使用常量声明的开始位置
+        let (line, column) = if self.current > 0 && self.current <= self.tokens.len() {
+            let prev_token = &self.tokens[self.current - 1];
+            (prev_token.line, prev_token.column)
+        } else {
+            (1, 1)
+        };
+        Ok(Statement { kind: StatementKind::VariableDeclaration { name, mutable: false, explicit_type: None, value, is_const: true }, line, column })
     }
 
     pub(crate) fn parse_variable_declaration(&mut self) -> Result<Statement> {
-        let (name, _line, _column) = if let Some(token) = self.current_token() {
-            if let TokenType::Identifier(name) = &token.token_type { let name = name.clone(); let line = token.line; let column = token.column; self.advance(); (name, line, column) }
-            else { return Err(KairoError::syntax("期望变量名".to_string(), token.line, token.column)); }
-        } else { return Err(KairoError::syntax("期望变量名".to_string(), 1, 1)); };
         let mut mutable = false;
+        
+        // 检查是否以 $ 开头（可变变量）
+        if let Some(token) = self.current_token() {
+            if matches!(token.token_type, TokenType::Dollar) {
+                mutable = true;
+                self.advance();
+            }
+        }
+        
+        let (name, _line, _column) = if let Some(token) = self.current_token() {
+            if let TokenType::Identifier(name) = &token.token_type { 
+                let name = name.clone(); 
+                let line = token.line; 
+                let column = token.column; 
+                self.advance(); 
+                (name, line, column) 
+            }
+            else { return Err(KairoError::syntax("期望变量名".to_string(), token.line, token.column)); }
+        } else { 
+            // 如果没有当前token，尝试从上一个token获取位置，或者使用默认位置
+            let (line, column) = if self.current > 0 && self.current <= self.tokens.len() {
+                let prev_token = &self.tokens[self.current - 1];
+                (prev_token.line, prev_token.column)
+            } else {
+                (1, 1)
+            };
+            return Err(KairoError::syntax("期望变量名".to_string(), line, column)); 
+        };
+        
         let mut explicit_type = None;
+        
+        // 检查是否有 ? 表示可空类型
+        let mut is_nullable = false;
         if let Some(token) = self.current_token() {
-            if matches!(token.token_type, TokenType::Exclamation) { mutable = true; self.advance(); }
+            if matches!(token.token_type, TokenType::Question) {
+                is_nullable = true;
+                self.advance();
+            }
         }
+        
+        // 检查老式 ! 语法（向后兼容）
         if let Some(token) = self.current_token() {
-            if matches!(token.token_type, TokenType::Colon) { self.advance(); explicit_type = Some(self.parse_type()?); }
+            if matches!(token.token_type, TokenType::Exclamation) { 
+                if !mutable {  // 如果没有用 $ 前缀，那么 ! 表示可变
+                    mutable = true; 
+                }
+                self.advance(); 
+            }
         }
+        
+        // 解析显式类型注解
+        if let Some(token) = self.current_token() {
+            if matches!(token.token_type, TokenType::Colon) { 
+                self.advance(); 
+                let mut parsed_type = self.parse_type()?;
+                
+                // 如果有 ? 标记，包装为可空类型
+                if is_nullable {
+                    parsed_type = crate::types::KairoType::Nullable(Box::new(parsed_type));
+                }
+                
+                explicit_type = Some(parsed_type);
+            }
+        }
+        
         self.consume(TokenType::Assign, "期望 '='")?;
         let value = self.parse_expression()?;
-        Ok(Statement::VariableDeclaration { name, mutable, explicit_type, value, is_const: false })
+        // 使用变量声明的开始位置
+        let (line, column) = if self.current > 0 && self.current <= self.tokens.len() {
+            let prev_token = &self.tokens[self.current - 1];
+            (prev_token.line, prev_token.column)
+        } else {
+            (1, 1)
+        };
+        Ok(Statement { kind: StatementKind::VariableDeclaration { name, mutable, explicit_type, value, is_const: false }, line, column })
     }
 
     pub(crate) fn parse_block(&mut self) -> Result<Block> {
@@ -92,7 +171,18 @@ impl Parser {
         Ok(Block { statements })
     }
 
-    pub(crate) fn parse_block_statement(&mut self) -> Result<Statement> { let block = self.parse_block()?; Ok(Statement::Block(block)) }
+    pub(crate) fn parse_block_statement(&mut self) -> Result<Statement> { 
+        let block = self.parse_block()?; 
+        let (line, column) = self.current_token().map(|t| (t.line, t.column)).unwrap_or_else(|| {
+            if self.current > 0 && self.current <= self.tokens.len() {
+                let prev_token = &self.tokens[self.current - 1];
+                (prev_token.line, prev_token.column)
+            } else {
+                (1, 1)
+            }
+        }); 
+        Ok(Statement { kind: StatementKind::Block(block), line, column }) 
+    }
 
     pub(crate) fn parse_if_statement(&mut self) -> Result<Statement> {
         self.consume(TokenType::If, "期望 'if'")?;
@@ -115,14 +205,18 @@ impl Parser {
                 else_ifs.push((else_if_condition, else_if_body));
             } else { else_branch = Some(self.parse_block()?); break; }
         }
-        Ok(Statement::If { condition, then_branch, else_ifs, else_branch })
+        // 使用条件表达式的行号作为if语句的位置
+        let (line, column) = (condition.line, condition.column);
+        Ok(Statement { kind: StatementKind::If { condition, then_branch, else_ifs, else_branch }, line, column })
     }
 
     pub(crate) fn parse_while_statement(&mut self) -> Result<Statement> {
         self.consume(TokenType::While, "期望 'while'")?;
         let condition = self.parse_expression()?;
         let body = self.parse_block()?;
-        Ok(Statement::While { condition, body })
+        // 使用条件表达式的行号作为while语句的位置
+        let (line, column) = (condition.line, condition.column);
+        Ok(Statement { kind: StatementKind::While { condition, body }, line, column })
     }
 
     pub(crate) fn parse_for_statement(&mut self) -> Result<Statement> {
@@ -130,13 +224,29 @@ impl Parser {
         let variable = if let Some(token) = self.current_token() {
             if let TokenType::Identifier(name) = &token.token_type { let name = name.clone(); self.advance(); name }
             else { return Err(KairoError::syntax("期望变量名".to_string(), token.line, token.column)); }
-        } else { return Err(KairoError::syntax("期望变量名".to_string(), 1, 1)); };
+        } else { 
+            // 如果没有当前token，尝试从上一个token获取位置，或者使用默认位置
+            let (line, column) = if self.current > 0 && self.current <= self.tokens.len() {
+                let prev_token = &self.tokens[self.current - 1];
+                (prev_token.line, prev_token.column)
+            } else {
+                (1, 1)
+            };
+            return Err(KairoError::syntax("期望变量名".to_string(), line, column)); 
+        };
         let mut value_variable = None;
         if self.check(&TokenType::Comma) { self.advance(); if let Some(token) = self.current_token() { if let TokenType::Identifier(name) = &token.token_type { value_variable = Some(name.clone()); self.advance(); } else { return Err(KairoError::syntax("期望变量名".to_string(), token.line, token.column)); } } }
         self.consume(TokenType::In, "期望 'in'")?;
         let iterable = self.parse_expression()?;
         let body = self.parse_block()?;
-        Ok(Statement::For { variable, value_variable, iterable, body })
+        // 使用for语句开始的位置
+        let (line, column) = if self.current > 0 && self.current <= self.tokens.len() {
+            let prev_token = &self.tokens[self.current - 1];
+            (prev_token.line, prev_token.column)
+        } else {
+            (1, 1)
+        };
+        Ok(Statement { kind: StatementKind::For { variable, value_variable, iterable, body }, line, column })
     }
 
     pub(crate) fn parse_match_statement(&mut self) -> Result<Statement> {
@@ -152,7 +262,14 @@ impl Parser {
             self.skip_comments_and_newlines();
         }
         self.consume(TokenType::RightBrace, "期望 '}'")?;
-        Ok(Statement::Match { value, arms })
+        // 使用match语句开始的位置
+        let (line, column) = if self.current > 0 && self.current <= self.tokens.len() {
+            let prev_token = &self.tokens[self.current - 1];
+            (prev_token.line, prev_token.column)
+        } else {
+            (1, 1)
+        };
+        Ok(Statement { kind: StatementKind::Match { value, arms }, line, column })
     }
 
     pub(crate) fn parse_match_arm(&mut self) -> Result<MatchArm> {
@@ -166,6 +283,13 @@ impl Parser {
     pub(crate) fn parse_break_statement(&mut self) -> Result<Statement> {
         self.consume(TokenType::Break, "期望 'break'")?;
         let levels = if let Some(token) = self.current_token() { if let TokenType::IntLiteral(n) = &token.token_type { let levels = *n as usize; self.advance(); Some(levels) } else { None } } else { None };
-        Ok(Statement::Break { levels })
+        // 使用break语句的位置
+        let (line, column) = if self.current > 0 && self.current <= self.tokens.len() {
+            let prev_token = &self.tokens[self.current - 1];
+            (prev_token.line, prev_token.column)
+        } else {
+            (1, 1)
+        };
+        Ok(Statement { kind: StatementKind::Break { levels }, line, column })
     }
 }

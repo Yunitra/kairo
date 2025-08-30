@@ -7,9 +7,9 @@
 //! - `statement.rs`：语句节点
 
 mod common;
-mod expression;
-mod statement;
+pub(crate) mod expression;
+pub(crate) mod statement;
 
 pub use common::{Block, MatchArm, MatchArmExpr, Parameter, Pattern, Program};
 pub use expression::{AssignmentOperator, BinaryOperator, Expression, UnaryOperator};
-pub use statement::Statement;
+pub use statement::{Statement, StatementKind};

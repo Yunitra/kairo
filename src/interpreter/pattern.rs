@@ -49,12 +49,12 @@ impl super::Interpreter {
         }
     }
 
-    pub(super) fn bind_pattern_variables(&mut self, pattern: &Pattern, value: &KairoValue) -> Result<()> {
+    pub(super) fn bind_pattern_variables(&mut self, pattern: &Pattern, value: &KairoValue, line: usize, column: usize) -> Result<()> {
         match pattern {
-            Pattern::Identifier(name) => { self.set_variable(name.clone(), value.clone(), false)?; }
-            Pattern::TypePattern { var, type_name: _ } => { self.set_variable(var.clone(), value.clone(), false)?; }
+            Pattern::Identifier(name) => { self.set_variable(name.clone(), value.clone(), false, line, column)?; }
+            Pattern::TypePattern { var, type_name: _ } => { self.set_variable(var.clone(), value.clone(), false, line, column)?; }
             Pattern::Tuple(patterns) => {
-                if let KairoValue::Tuple(values) = value { for (p, v) in patterns.iter().zip(values.iter()) { self.bind_pattern_variables(p, v)?; } }
+                if let KairoValue::Tuple(values) = value { for (p, v) in patterns.iter().zip(values.iter()) { self.bind_pattern_variables(p, v, line, column)?; } }
             }
             _ => {}
         }

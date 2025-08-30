@@ -4,6 +4,14 @@
 
 use crate::types::KairoValue;
 
+/// 统一的表达式节点，携带位置信息（行、列）
+#[derive(Debug, Clone)]
+pub struct Expression {
+    pub kind: ExpressionKind,
+    pub line: usize,
+    pub column: usize,
+}
+
 #[derive(Debug, Clone)]
 pub enum BinaryOperator {
     Add,
@@ -41,7 +49,7 @@ pub enum AssignmentOperator {
 }
 
 #[derive(Debug, Clone)]
-pub enum Expression {
+pub enum ExpressionKind {
     Literal(KairoValue),
     Identifier(String),
     Binary {
@@ -56,15 +64,11 @@ pub enum Expression {
     FunctionCall {
         name: String,
         arguments: Vec<Expression>,
-        line: usize,
-        column: usize,
     },
     MethodCall {
         object: Box<Expression>,
         method: String,
         arguments: Vec<Expression>,
-        line: usize,
-        column: usize,
     },
     List(Vec<Expression>),
     Tuple(Vec<Expression>),
@@ -83,8 +87,6 @@ pub enum Expression {
         target: String,
         operator: AssignmentOperator,
         value: Box<Expression>,
-        line: usize,
-        column: usize,
     },
     MatchExpr {
         value: Box<Expression>,
@@ -93,12 +95,30 @@ pub enum Expression {
     Pipeline {
         left: Box<Expression>,
         right: Box<Expression>,
-        line: usize,
-        column: usize,
     },
     /// 管道占位符 `_` 在表达式位置的表示
-    Placeholder {
-        line: usize,
-        column: usize,
+    Placeholder,
+    /// 安全调用 obj?.method() 或 obj?.field
+    SafeCall {
+        object: Box<Expression>,
+        method: String,
+        arguments: Vec<Expression>,
     },
+    /// Elvis 操作符 expr ?: defaultValue
+    Elvis {
+        left: Box<Expression>,
+        right: Box<Expression>,
+    },
+    /// 三目运算符 condition ? then_expr : else_expr
+    Ternary {
+        condition: Box<Expression>,
+        then_expr: Box<Expression>,
+        else_expr: Box<Expression>,
+    },
+}
+
+impl Expression {
+    pub fn new(kind: ExpressionKind, line: usize, column: usize) -> Self {
+        Self { kind, line, column }
+    }
 }

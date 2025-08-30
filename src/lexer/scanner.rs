@@ -77,6 +77,23 @@ impl super::Lexer {
                     return Ok(Token { token_type: TokenType::Underscore, line, column });
                 }
 
+                Some('$') => {
+                    self.advance();
+                    return Ok(Token { token_type: TokenType::Dollar, line, column });
+                }
+
+                Some('?') => {
+                    self.advance();
+                    if self.current_char == Some('.') {
+                        self.advance();
+                        return Ok(Token { token_type: TokenType::SafeCall, line, column });
+                    } else if self.current_char == Some(':') {
+                        self.advance();
+                        return Ok(Token { token_type: TokenType::Elvis, line, column });
+                    }
+                    return Ok(Token { token_type: TokenType::Question, line, column });
+                }
+
                 Some(ch) if ch.is_alphabetic() => {
                     let token_type = self.keyword_or_identifier();
                     return Ok(Token { token_type, line, column });

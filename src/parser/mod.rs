@@ -82,7 +82,14 @@ impl Parser {
                 token.column,
             ));
         }
-        Err(KairoError::syntax(message.to_string(), 1, 1))
+        // 如果没有当前token，尝试从上一个token获取位置，或者使用默认位置
+        let (line, column) = if self.current > 0 && self.current <= self.tokens.len() {
+            let prev_token = &self.tokens[self.current - 1];
+            (prev_token.line, prev_token.column)
+        } else {
+            (1, 1)
+        };
+        Err(KairoError::syntax(message.to_string(), line, column))
     }
 
     /// 跳过换行（目前未直接使用，保留以备细粒度控制）

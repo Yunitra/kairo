@@ -32,6 +32,8 @@ pub enum KairoType {
     Void,
     /// 泛型占位，如 T/K/V
     Generic(String),
+    /// 可空类型，如 String?
+    Nullable(Box<KairoType>),
 }
 
 impl std::fmt::Display for KairoType {
@@ -62,6 +64,7 @@ impl std::fmt::Display for KairoType {
             KairoType::Unit => write!(f, "()"),
             KairoType::Void => write!(f, "Void"),
             KairoType::Generic(name) => write!(f, "{}", name),
+            KairoType::Nullable(inner) => write!(f, "{}?", inner),
         }
     }
 }

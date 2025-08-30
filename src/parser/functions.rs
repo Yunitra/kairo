@@ -2,7 +2,7 @@
 
 //! 函数声明与返回语句解析（含扩展函数）
 
-use crate::ast::{Parameter, Statement};
+use crate::ast::{Parameter, Statement, StatementKind};
 use crate::error::{KairoError, Result};
 use crate::lexer::TokenType;
 use crate::types::KairoType;
@@ -25,7 +25,16 @@ impl Parser {
                             self.advance();
                             param
                         } else { return Err(KairoError::syntax("期望泛型参数".to_string(), token.line, token.column)); }
-                    } else { return Err(KairoError::syntax("期望泛型参数".to_string(), 1, 1)); };
+                    } else { 
+                        // 如果没有当前token，尝试从上一个token获取位置，或者使用默认位置
+                        let (line, column) = if self.current > 0 && self.current <= self.tokens.len() {
+                            let prev_token = &self.tokens[self.current - 1];
+                            (prev_token.line, prev_token.column)
+                        } else {
+                            (1, 1)
+                        };
+                        return Err(KairoError::syntax("期望泛型参数".to_string(), line, column)); 
+                    };
                     self.consume(TokenType::RightBracket, "期望 ']'")?;
                     format!("List[{}]", generic_param)
                 } else { type_name };
@@ -34,7 +43,16 @@ impl Parser {
                     let method_name = if let Some(token) = self.current_token() {
                         if let TokenType::Identifier(name) = &token.token_type { let name = name.clone(); self.advance(); name }
                         else { return Err(KairoError::syntax("期望方法名".to_string(), token.line, token.column)); }
-                    } else { return Err(KairoError::syntax("期望方法名".to_string(), 1, 1)); };
+                    } else { 
+                        // 如果没有当前token，尝试从上一个token获取位置，或者使用默认位置
+                        let (line, column) = if self.current > 0 && self.current <= self.tokens.len() {
+                            let prev_token = &self.tokens[self.current - 1];
+                            (prev_token.line, prev_token.column)
+                        } else {
+                            (1, 1)
+                        };
+                        return Err(KairoError::syntax("期望方法名".to_string(), line, column)); 
+                    };
                     return self.parse_extension_function_body(full_type_name, method_name);
                 } else {
                     let name = full_type_name;
@@ -46,7 +64,16 @@ impl Parser {
         let name = if let Some(token) = self.current_token() {
             if let TokenType::Identifier(name) = &token.token_type { let name = name.clone(); self.advance(); name }
             else { return Err(KairoError::syntax("期望函数名".to_string(), token.line, token.column)); }
-        } else { return Err(KairoError::syntax("期望函数名".to_string(), 1, 1)); };
+        } else { 
+            // 如果没有当前token，尝试从上一个token获取位置，或者使用默认位置
+            let (line, column) = if self.current > 0 && self.current <= self.tokens.len() {
+                let prev_token = &self.tokens[self.current - 1];
+                (prev_token.line, prev_token.column)
+            } else {
+                (1, 1)
+            };
+            return Err(KairoError::syntax("期望函数名".to_string(), line, column)); 
+        };
         self.parse_regular_function_body(name)
     }
 
@@ -88,7 +115,16 @@ impl Parser {
                 let param_name = if let Some(token) = self.current_token() {
                     if let TokenType::Identifier(name) = &token.token_type { let name = name.clone(); self.advance(); name }
                     else { return Err(KairoError::syntax("期望参数名".to_string(), token.line, token.column)); }
-                } else { return Err(KairoError::syntax("期望参数名".to_string(), 1, 1)); };
+                } else { 
+                    // 如果没有当前token，尝试从上一个token获取位置，或者使用默认位置
+                    let (line, column) = if self.current > 0 && self.current <= self.tokens.len() {
+                        let prev_token = &self.tokens[self.current - 1];
+                        (prev_token.line, prev_token.column)
+                    } else {
+                        (1, 1)
+                    };
+                    return Err(KairoError::syntax("期望参数名".to_string(), line, column)); 
+                };
                 let mutable = if self.check(&TokenType::Exclamation) { self.advance(); true } else { false };
                 self.consume(TokenType::Colon, "期望 ':'")?;
                 let param_type = self.parse_type()?;
@@ -107,11 +143,11 @@ impl Parser {
         if self.check(&TokenType::Assign) {
             self.advance();
             let body_expr = self.parse_expression()?;
-            return Ok(Statement::ExtensionFunction { type_name, method_name, parameters, return_type, body: None, body_expr: Some(body_expr), line: self.current_token().map(|t| t.line).unwrap_or(1), column: self.current_token().map(|t| t.column).unwrap_or(1) });
+            return Ok(Statement { kind: StatementKind::ExtensionFunction { type_name, method_name, parameters, return_type, body: None, body_expr: Some(body_expr) }, line: self.current_token().map(|t| t.line).unwrap_or(1), column: self.current_token().map(|t| t.column).unwrap_or(1) });
         } else {
             self.skip_comments_and_newlines();
             let body = self.parse_block()?;
-            return Ok(Statement::ExtensionFunction { type_name, method_name, parameters, return_type, body: Some(body), body_expr: None, line: self.current_token().map(|t| t.line).unwrap_or(1), column: self.current_token().map(|t| t.column).unwrap_or(1) });
+            return Ok(Statement { kind: StatementKind::ExtensionFunction { type_name, method_name, parameters, return_type, body: Some(body), body_expr: None }, line: self.current_token().map(|t| t.line).unwrap_or(1), column: self.current_token().map(|t| t.column).unwrap_or(1) });
         }
     }
 
@@ -123,7 +159,16 @@ impl Parser {
                 let param_name = if let Some(token) = self.current_token() {
                     if let TokenType::Identifier(name) = &token.token_type { let name = name.clone(); self.advance(); name }
                     else { return Err(KairoError::syntax("期望参数名".to_string(), token.line, token.column)); }
-                } else { return Err(KairoError::syntax("期望参数名".to_string(), 1, 1)); };
+                } else { 
+                    // 如果没有当前token，尝试从上一个token获取位置，或者使用默认位置
+                    let (line, column) = if self.current > 0 && self.current <= self.tokens.len() {
+                        let prev_token = &self.tokens[self.current - 1];
+                        (prev_token.line, prev_token.column)
+                    } else {
+                        (1, 1)
+                    };
+                    return Err(KairoError::syntax("期望参数名".to_string(), line, column)); 
+                };
                 let mutable = if self.check(&TokenType::Exclamation) { self.advance(); true } else { false };
                 self.consume(TokenType::Colon, "期望 ':'")?;
                 let param_type = self.parse_type()?;
@@ -140,18 +185,27 @@ impl Parser {
         if self.check(&TokenType::Assign) {
             self.advance();
             let body_expr = self.parse_expression()?;
-            return Ok(Statement::FunctionDeclaration { name, parameters, return_type, body: None, body_expr: Some(body_expr), line: self.current_token().map(|t| t.line).unwrap_or(1), column: self.current_token().map(|t| t.column).unwrap_or(1) });
+            return Ok(Statement { kind: StatementKind::FunctionDeclaration { name, parameters, return_type, body: None, body_expr: Some(body_expr) }, line: self.current_token().map(|t| t.line).unwrap_or(1), column: self.current_token().map(|t| t.column).unwrap_or(1) });
         } else {
             self.skip_comments_and_newlines();
             let body = self.parse_block()?;
-            return Ok(Statement::FunctionDeclaration { name, parameters, return_type, body: Some(body), body_expr: None, line: self.current_token().map(|t| t.line).unwrap_or(1), column: self.current_token().map(|t| t.column).unwrap_or(1) });
+            return Ok(Statement { kind: StatementKind::FunctionDeclaration { name, parameters, return_type, body: Some(body), body_expr: None }, line: self.current_token().map(|t| t.line).unwrap_or(1), column: self.current_token().map(|t| t.column).unwrap_or(1) });
         }
     }
 
     pub(crate) fn parse_return_statement(&mut self) -> Result<Statement> {
-        let (line, column) = if let Some(token) = self.current_token() { (token.line, token.column) } else { (1, 1) };
+        let (line, column) = if let Some(token) = self.current_token() { 
+            (token.line, token.column) 
+        } else { 
+            if self.current > 0 && self.current <= self.tokens.len() {
+                let prev_token = &self.tokens[self.current - 1];
+                (prev_token.line, prev_token.column)
+            } else {
+                (1, 1)
+            }
+        };
         self.consume(TokenType::Return, "期望 'return'")?;
         let value = if self.check(&TokenType::Newline) || self.is_at_end() { None } else { Some(self.parse_expression()?) };
-        Ok(Statement::Return { value, line, column })
+        Ok(Statement { kind: StatementKind::Return { value }, line, column })
     }
 }

@@ -3,6 +3,7 @@
 //! 模式解析
 
 use crate::ast::{Pattern, Expression};
+use crate::ast::expression::ExpressionKind;
 use crate::error::{KairoError, Result};
 use crate::lexer::TokenType;
 use crate::types::KairoValue;
@@ -37,13 +38,14 @@ impl Parser {
                 TokenType::TextLiteral(value) => { let value = value.clone(); self.advance(); Ok(Pattern::Literal(KairoValue::Text(value))) }
                 TokenType::BoolLiteral(value) => { let value = *value; self.advance(); Ok(Pattern::Literal(KairoValue::Bool(value))) }
                 TokenType::In => {
+                    let (line, column) = (token.line, token.column);
                     self.advance();
                     if self.check(&TokenType::DotDot) || self.check(&TokenType::DotDotEqual) {
                         let inclusive = if self.check(&TokenType::DotDotEqual) { true } else { false };
                         self.advance();
                         let end = self.parse_expression()?;
-                        let start = Expression::Literal(KairoValue::Int(0));
-                        let range = Expression::Range { start: Box::new(start), end: Box::new(end), inclusive };
+                        let start = Expression { kind: ExpressionKind::Literal(KairoValue::Int(0)), line, column };
+                        let range = Expression { kind: ExpressionKind::Range { start: Box::new(start), end: Box::new(end), inclusive }, line, column };
                         Ok(Pattern::In(range))
                     } else {
                         let expr = self.parse_expression()?;
@@ -67,7 +69,14 @@ impl Parser {
                 _ => Err(KairoError::syntax(format!("无效的模式: {:?}", token.token_type), token.line, token.column)),
             }
         } else {
-            Err(KairoError::syntax("期望模式".to_string(), 1, 1))
+            // 如果没有当前token，尝试从上一个token获取位置，或者使用默认位置
+        let (line, column) = if self.current > 0 && self.current <= self.tokens.len() {
+            let prev_token = &self.tokens[self.current - 1];
+            (prev_token.line, prev_token.column)
+        } else {
+            (1, 1)
+        };
+        Err(KairoError::syntax("期望模式".to_string(), line, column))
         }
     }
 }
