@@ -113,6 +113,9 @@ impl super::Lexer {
                     if self.current_char == Some('=') {
                         self.advance();
                         return Ok(Token { token_type: TokenType::NotEqual, line, column });
+                    } else if self.current_char == Some(':') {
+                        self.advance();
+                        return Ok(Token { token_type: TokenType::ErrorHandle, line, column });
                     }
                     return Ok(Token { token_type: TokenType::Exclamation, line, column });
                 }

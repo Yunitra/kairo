@@ -2,7 +2,7 @@
 
 //! 表达式解析
 
-use crate::ast::{Expression, BinaryOperator, UnaryOperator};
+use crate::ast::{Expression, BinaryOperator, UnaryOperator, ErrorHandlerClause, ErrorHandler, CatchClause};
 use crate::ast::expression::ExpressionKind;
 use crate::error::{KairoError, Result};
 use crate::lexer::TokenType;
@@ -66,6 +66,19 @@ impl Parser {
                 self.advance();
                 let right = self.parse_if_expression()?;
                 expr = Expression::new(ExpressionKind::Elvis { left: Box::new(expr), right: Box::new(right) }, line, column);
+            } else if matches!(token.token_type, TokenType::ErrorHandle) {
+                // 错误处理语法糖 expr !: handler
+                let (line, column) = (token.line, token.column);
+                self.advance();
+
+                let handler = if self.check(&TokenType::LeftBrace) {
+                    self.parse_error_handler_match_block()?
+                } else {
+                    let handler_expr = self.parse_if_expression()?;
+                    ErrorHandler::Simple(Box::new(handler_expr))
+                };
+                
+                expr = Expression::new(ExpressionKind::ErrorHandle { expression: Box::new(expr), handler }, line, column);
             } else if matches!(token.token_type, TokenType::Question) {
                 // 检查下一个token是否是冒号，如果是则为Elvis操作符
                 if let Some(next_token) = self.tokens.get(self.current + 1) {
@@ -131,6 +144,46 @@ impl Parser {
         self.parse_or()
     }
 
+    fn parse_error_handler_match_block(&mut self) -> Result<ErrorHandler> {
+        self.consume(TokenType::LeftBrace, "期望 '{'")?;
+        self.skip_comments_and_newlines();
+    
+        let mut clauses = Vec::<ErrorHandlerClause>::new();
+        let mut default = None;
+    
+        while !self.check(&TokenType::RightBrace) && !self.is_at_end() {
+            let error_type = if self.check(&TokenType::Underscore) {
+                self.advance();
+                "_".to_string()
+            } else {
+                self.expect_identifier()?
+            };
+    
+            // todo: support pattern matching like `NetworkError(code)`
+    
+            self.consume(TokenType::Arrow, "期望 '->'")?;
+            let handler = self.parse_expression()?;
+    
+            if error_type == "_" {
+                default = Some(Box::new(handler));
+            } else {
+                clauses.push(ErrorHandlerClause {
+                    error_type,
+                    variable: None, // Simplified for now
+                    handler: Box::new(handler),
+                });
+            }
+    
+            if self.check(&TokenType::Comma) {
+                self.advance();
+            }
+            self.skip_comments_and_newlines();
+        }
+    
+        self.consume(TokenType::RightBrace, "期望 '}'")?;
+        Ok(ErrorHandler::Match { clauses, default })
+    }
+    
     pub(crate) fn parse_or(&mut self) -> Result<Expression> {
         let mut expr = self.parse_and()?;
         while let Some(token) = self.current_token() {
@@ -242,17 +295,50 @@ impl Parser {
             let operator = match &token.token_type {
                 TokenType::Not => UnaryOperator::Not,
                 TokenType::Minus => UnaryOperator::Minus,
-                _ => return self.parse_call(),
+                _ => return self.parse_postfix(),
             };
             let op = self.advance().unwrap().clone();
             let operand = self.parse_unary()?;
             return Ok(Expression::new(ExpressionKind::Unary { operator, operand: Box::new(operand) }, op.line, op.column));
         }
-        self.parse_call()
+        self.parse_postfix()
+    }
+    
+    pub(crate) fn parse_postfix(&mut self) -> Result<Expression> {
+        let mut expr = self.parse_call()?;
+        loop {
+            if let Some(token) = self.current_token() {
+                match &token.token_type {
+                    TokenType::Increment => {
+                        if let Expression { kind: ExpressionKind::Identifier(name), .. } = expr {
+                            let line = token.line; let column = token.column; self.advance();
+                            expr = Expression::new(ExpressionKind::Assignment { target: name.clone(), operator: crate::ast::AssignmentOperator::AddAssign, value: Box::new(Expression::new(ExpressionKind::Literal(crate::types::KairoValue::Int(1)), line, column)) }, line, column);
+                        } else { return Err(KairoError::syntax("++ 只能用于变量".to_string(), token.line, token.column)); }
+                    }
+                    TokenType::Decrement => {
+                        if let Expression { kind: ExpressionKind::Identifier(name), .. } = expr {
+                            let line = token.line; let column = token.column; self.advance();
+                            expr = Expression::new(ExpressionKind::Assignment { target: name.clone(), operator: crate::ast::AssignmentOperator::SubAssign, value: Box::new(Expression::new(ExpressionKind::Literal(crate::types::KairoValue::Int(1)), line, column)) }, line, column);
+                        } else { return Err(KairoError::syntax("-- 只能用于变量".to_string(), token.line, token.column)); }
+                    }
+                    TokenType::Exclamation => {
+                        // 错误传播操作符 expr!
+                        let line = token.line; 
+                        let column = token.column; 
+                        self.advance();
+                        expr = Expression::new(ExpressionKind::ErrorPropagation { expression: Box::new(expr) }, line, column);
+                    }
+                    _ => break,
+                }
+            } else {
+                break;
+            }
+        }
+        Ok(expr)
     }
 
     pub(crate) fn parse_call(&mut self) -> Result<Expression> {
-        let mut expr = self.parse_postfix()?;
+        let mut expr = self.parse_primary()?;
         loop {
             if let Some(token) = self.current_token() {
                 if matches!(token.token_type, TokenType::LeftParen) {
@@ -332,28 +418,6 @@ impl Parser {
         Ok(expr)
     }
 
-    pub(crate) fn parse_postfix(&mut self) -> Result<Expression> {
-        let mut expr = self.parse_primary()?;
-        if let Some(token) = self.current_token() {
-            match &token.token_type {
-                TokenType::Increment => {
-                    if let Expression { kind: ExpressionKind::Identifier(name), .. } = expr {
-                        let line = token.line; let column = token.column; self.advance();
-                        expr = Expression::new(ExpressionKind::Assignment { target: name.clone(), operator: crate::ast::AssignmentOperator::AddAssign, value: Box::new(Expression::new(ExpressionKind::Literal(crate::types::KairoValue::Int(1)), line, column)) }, line, column);
-                    } else { return Err(KairoError::syntax("++ 只能用于变量".to_string(), token.line, token.column)); }
-                }
-                TokenType::Decrement => {
-                    if let Expression { kind: ExpressionKind::Identifier(name), .. } = expr {
-                        let line = token.line; let column = token.column; self.advance();
-                        expr = Expression::new(ExpressionKind::Assignment { target: name.clone(), operator: crate::ast::AssignmentOperator::SubAssign, value: Box::new(Expression::new(ExpressionKind::Literal(crate::types::KairoValue::Int(1)), line, column)) }, line, column);
-                    } else { return Err(KairoError::syntax("-- 只能用于变量".to_string(), token.line, token.column)); }
-                }
-                _ => {}
-            }
-        }
-        Ok(expr)
-    }
-
     pub(crate) fn parse_primary(&mut self) -> Result<Expression> {
         if let Some(token) = self.current_token() {
             let (token_type, line, column) = (token.token_type.clone(), token.line, token.column);
@@ -393,14 +457,97 @@ impl Parser {
                     self.advance();
                     let mut pairs = Vec::new();
                     if !self.check(&TokenType::RightBrace) {
+                        self.skip_comments_and_newlines();
                         let key = self.parse_expression()?;
                         self.consume(TokenType::Colon, "期望 ':'")?;
                         let value = self.parse_expression()?;
                         pairs.push((key, value));
-                        while self.check(&TokenType::Comma) { self.advance(); if self.check(&TokenType::RightBrace) { break; } let key = self.parse_expression()?; self.consume(TokenType::Colon, "期望 ':'")?; let value = self.parse_expression()?; pairs.push((key, value)); }
+                        while self.check(&TokenType::Comma) { 
+                            self.advance(); 
+                            self.skip_comments_and_newlines();
+                            if self.check(&TokenType::RightBrace) { break; } 
+                            let key = self.parse_expression()?; 
+                            self.consume(TokenType::Colon, "期望 ':'")?; 
+                            let value = self.parse_expression()?; 
+                            pairs.push((key, value)); 
+                        }
                     }
                     self.consume(TokenType::RightBrace, "期望 '}'")?;
                     Ok(Expression::new(ExpressionKind::Map(pairs), line, column))
+                }
+                TokenType::Try => {
+                    self.advance();
+                    
+                    // 解析 try 表达式
+                    let try_expr = if self.check(&TokenType::LeftBrace) {
+                        let block = self.parse_block()?;
+                        Expression::new(ExpressionKind::BlockExpr(block), line, column)
+                    } else {
+                        self.parse_expression()?
+                    };
+                    
+                    let mut catch_clauses = Vec::new();
+                    let mut default_catch = None;
+                    
+                    // 解析 catch 子句
+                    while self.check(&TokenType::Catch) {
+                        self.advance();
+                        
+                        if let Some(token) = self.current_token() {
+                            if let TokenType::Identifier(error_type) = &token.token_type {
+                                let error_type = error_type.clone();
+                                self.advance();
+                                
+                                let variable = if self.check(&TokenType::Identifier("as".to_string())) {
+                                    self.advance();
+                                    if let Some(token) = self.current_token() {
+                                        if let TokenType::Identifier(var_name) = &token.token_type {
+                                            let var_name = var_name.clone();
+                                            self.advance();
+                                            Some(var_name)
+                                        } else {
+                                            return Err(KairoError::syntax(
+                                                "期望变量名".to_string(),
+                                                token.line,
+                                                token.column,
+                                            ));
+                                        }
+                                    } else {
+                                        None
+                                    }
+                                } else {
+                                    None
+                                };
+                                
+                                let handler = if self.check(&TokenType::LeftBrace) {
+                                    let block = self.parse_block()?;
+                                    Expression::new(ExpressionKind::BlockExpr(block), line, column)
+                                } else {
+                                    self.parse_expression()?
+                                };
+                                
+                                catch_clauses.push(CatchClause {
+                                    error_type,
+                                    variable,
+                                    handler: Box::new(handler),
+                                });
+                            } else if let TokenType::LeftBrace = &token.token_type {
+                                // catch { ... } (默认捕获)
+                                let block = self.parse_block()?;
+                                default_catch = Some(Box::new(Expression::new(ExpressionKind::BlockExpr(block), line, column)));
+                            } else {
+                                // catch expr (默认捕获)
+                                let handler = self.parse_expression()?;
+                                default_catch = Some(Box::new(handler));
+                            }
+                        }
+                    }
+                    
+                    Ok(Expression::new(ExpressionKind::TryCatch {
+                        try_expr: Box::new(try_expr),
+                        catch_clauses,
+                        default_catch,
+                    }, line, column))
                 }
                 _ => Err(KairoError::syntax(format!("意外的 token: {:?}", token_type), line, column)),
             }

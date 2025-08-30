@@ -12,6 +12,7 @@ pub struct FunctionDef {
     pub parameters: Vec<(String, KairoType, bool, Option<Expression>, bool)>,
     pub return_type: Option<KairoType>,
     pub body: FunctionBodyType,
+    pub raises: Option<Vec<String>>,
     pub line: usize,
     pub column: usize,
 }
@@ -90,18 +91,35 @@ impl super::Interpreter {
                 FunctionBodyType::Block(block) => {
                     self.execute_block(block.clone())?;
                     match std::mem::replace(&mut self.control_flow, super::control_flow::ControlFlow::None) {
-                        super::control_flow::ControlFlow::Return(value, return_line, return_column) => (value, return_line, return_column),
+                        super::control_flow::ControlFlow::Return(value, return_line, return_column) => (Ok(value), return_line, return_column),
+                        super::control_flow::ControlFlow::ThrownError { .. } => {
+                            // Propagate the error signal
+                            let signal = KairoError::control_flow_signal(self.control_flow.clone(), "Error thrown from function");
+                            (Err(signal), function.line, function.column)
+                        }
                         _ => {
                             match &function.return_type {
-                                Some(KairoType::Void) | None => (KairoValue::Unit, function.line, function.column),
+                                Some(KairoType::Void) | None => (Ok(KairoValue::Unit), function.line, function.column),
                                 Some(return_type) => {
-                                    return Err(KairoError::runtime(format!("函数 {} 期望返回 {} 类型，但没有返回语句", name, return_type), function.line, function.column));
+                                    let err = KairoError::runtime(format!("函数 {} 期望返回 {} 类型，但没有返回语句", name, return_type), function.line, function.column);
+                                    (Err(err), function.line, function.column)
                                 }
                             }
                         }
                     }
                 }
-                FunctionBodyType::Expression(expr) => { let result = self.evaluate_expression(expr.clone())?; (result, function.line, function.column) }
+                FunctionBodyType::Expression(expr) => { 
+                    let result = self.evaluate_expression(expr.clone());
+                    (result, function.line, function.column) 
+                }
+            };
+
+            let result = match result {
+                Ok(val) => val,
+                Err(e) => {
+                    self.pop_scope();
+                    return Err(e);
+                }
             };
 
             self.pop_scope();
@@ -119,5 +137,7 @@ impl super::Interpreter {
         }
     }
 }
+
+
 
 

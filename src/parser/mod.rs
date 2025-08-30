@@ -118,4 +118,27 @@ impl Parser {
             }
         }
     }
+
+    /// 期望一个标识符
+    fn expect_identifier(&mut self) -> Result<String> {
+        if let Some(token) = self.current_token() {
+            if let TokenType::Identifier(name) = &token.token_type {
+                let name = name.clone();
+                self.advance();
+                return Ok(name);
+            }
+            return Err(KairoError::syntax(
+                format!("期望标识符, 但找到了 {:?}", token.token_type),
+                token.line,
+                token.column,
+            ));
+        }
+        let (line, column) = if self.current > 0 && self.current <= self.tokens.len() {
+            let prev_token = &self.tokens[self.current - 1];
+            (prev_token.line, prev_token.column)
+        } else {
+            (1, 1)
+        };
+        Err(KairoError::syntax("期望标识符".to_string(), line, column))
+    }
 }

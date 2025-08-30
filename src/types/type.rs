@@ -34,6 +34,18 @@ pub enum KairoType {
     Generic(String),
     /// 可空类型，如 String?
     Nullable(Box<KairoType>),
+    /// 错误类型
+    Error {
+        name: String,
+        /// 错误数据字段类型（可选）
+        fields: Option<Vec<(String, KairoType)>>,
+    },
+    /// 错误组类型
+    ErrorGroup {
+        name: String,
+        /// 包含的错误类型名称
+        errors: Vec<String>,
+    },
 }
 
 impl std::fmt::Display for KairoType {
@@ -65,6 +77,27 @@ impl std::fmt::Display for KairoType {
             KairoType::Void => write!(f, "Void"),
             KairoType::Generic(name) => write!(f, "{}", name),
             KairoType::Nullable(inner) => write!(f, "{}?", inner),
+            KairoType::Error { name, fields } => {
+                if let Some(fields) = fields {
+                    write!(f, "err {} {{ ", name)?;
+                    for (i, (field_name, field_type)) in fields.iter().enumerate() {
+                        if i > 0 { write!(f, ", ")?; }
+                        write!(f, "{}: {}", field_name, field_type)?;
+                    }
+                    write!(f, " }}")
+                } else {
+                    write!(f, "err {}", name)
+                }
+            }
+            KairoType::ErrorGroup { name, errors } => {
+                write!(f, "err {} = ", name)?;
+                for (i, error) in errors.iter().enumerate() {
+                    if i > 0 { write!(f, ", ")?; }
+                    write!(f, "{}", error)?;
+                }
+                Ok(())
+            }
+        
         }
     }
 }

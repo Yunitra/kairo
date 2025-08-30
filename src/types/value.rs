@@ -29,6 +29,12 @@ pub enum KairoValue {
     Unit,
     /// 空值
     Null,
+    /// 错误值
+    Error {
+        name: String,
+        /// 错误数据
+        data: Option<HashMap<String, KairoValue>>,
+    },
 }
 
 impl KairoValue {
@@ -65,6 +71,16 @@ impl KairoValue {
             }
             KairoValue::Unit => KairoType::Unit,
             KairoValue::Null => KairoType::Nullable(Box::new(KairoType::Unit)),
+            KairoValue::Error { name, data } => {
+                let fields = data.as_ref().map(|d| {
+                    d.iter().map(|(k, v)| (k.clone(), v.get_type())).collect()
+                });
+                KairoType::Error { 
+                    name: name.clone(), 
+                    fields 
+                }
+            }
+        
         }
     }
 
@@ -81,6 +97,24 @@ impl KairoValue {
             KairoValue::Function { .. } => true,
             KairoValue::Unit => false,
             KairoValue::Null => false,
+            KairoValue::Error { .. } => false, // 错误值被视为 false
+        }
+    }
+
+    /// 根据类型获取默认值
+    pub fn default_for_type(t: &KairoType) -> Self {
+        match t {
+            KairoType::Int => KairoValue::Int(0),
+            KairoType::Float => KairoValue::Float(0.0),
+            KairoType::Text => KairoValue::Text(String::new()),
+            KairoType::Bool => KairoValue::Bool(false),
+            KairoType::List(_) => KairoValue::List(Vec::new()),
+            KairoType::Map(_, _) => KairoValue::Map(HashMap::new()),
+            KairoType::Tuple(types) => {
+                KairoValue::Tuple(types.iter().map(Self::default_for_type).collect())
+            }
+            KairoType::Unit | KairoType::Void => KairoValue::Unit,
+            _ => KairoValue::Null,
         }
     }
 }
@@ -126,6 +160,19 @@ impl std::fmt::Display for KairoValue {
             }
             KairoValue::Unit => write!(f, "()"),
             KairoValue::Null => write!(f, "null"),
+            KairoValue::Error { name, data } => {
+                if let Some(data) = data {
+                    write!(f, "{}(", name)?;
+                    for (i, (key, value)) in data.iter().enumerate() {
+                        if i > 0 { write!(f, ", ")?; }
+                        write!(f, "{}: {}", key, value)?;
+                    }
+                    write!(f, ")")
+                } else {
+                    write!(f, "{}", name)
+                }
+            }
+        
         }
     }
 }

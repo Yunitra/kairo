@@ -2,7 +2,7 @@
 
 //! 语句解析
 
-use crate::ast::{Statement, StatementKind, Block, MatchArm, Program};
+use crate::ast::{Statement, StatementKind, Block, MatchArm, Program, ErrorField};
 use crate::error::{KairoError, Result};
 use crate::lexer::TokenType;
 
@@ -26,6 +26,8 @@ impl Parser {
             match &token.token_type {
                 TokenType::Const => { return self.parse_const_declaration(); }
                 TokenType::Fun => { return self.parse_function_declaration(); }
+                TokenType::Err => { return self.parse_error_definition(); }
+                TokenType::Fail => { return self.parse_fail_statement(); }
                 TokenType::Return => { return self.parse_return_statement(); }
                 TokenType::If => { return self.parse_if_statement(); }
                 TokenType::While => { return self.parse_while_statement(); }
@@ -291,5 +293,215 @@ impl Parser {
             (1, 1)
         };
         Ok(Statement { kind: StatementKind::Break { levels }, line, column })
+    }
+
+    /// 解析错误定义语句
+    /// 语法：err ErrorName 或 err ErrorName { field: Type } 或 err GroupName = Error1, Error2
+    pub(crate) fn parse_error_definition(&mut self) -> Result<Statement> {
+        let start_token = self.consume(TokenType::Err, "期望 'err'")?;
+        
+        // 错误名称
+        let name = if let Some(token) = self.current_token() {
+            if let TokenType::Identifier(name) = &token.token_type {
+                let name = name.clone();
+                self.advance();
+                name
+            } else {
+                return Err(KairoError::syntax(
+                    "期望错误名称".to_string(),
+                    token.line,
+                    token.column,
+                ));
+            }
+        } else {
+            return Err(KairoError::syntax(
+                "期望错误名称".to_string(),
+                start_token.line,
+                start_token.column,
+            ));
+        };
+
+        // 检查是否是错误组定义
+        if self.check(&TokenType::Assign) {
+            self.advance(); // consume '='
+            let mut errors = Vec::new();
+            
+            // 解析错误组成员
+            loop {
+                if let Some(token) = self.current_token() {
+                    if let TokenType::Identifier(error_name) = &token.token_type {
+                        errors.push(error_name.clone());
+                        self.advance();
+                        
+                        if self.check(&TokenType::Comma) {
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    } else {
+                        return Err(KairoError::syntax(
+                            "期望错误名称".to_string(),
+                            token.line,
+                            token.column,
+                        ));
+                    }
+                } else {
+                    break;
+                }
+            }
+            
+            return Ok(Statement {
+                kind: StatementKind::ErrorDefinition {
+                    name,
+                    fields: None,
+                    error_group: Some(errors),
+                },
+                line: start_token.line,
+                column: start_token.column,
+            });
+        }
+
+        // 检查是否有字段定义
+        let fields = if self.check(&TokenType::LeftBrace) {
+            self.advance(); // consume '{'
+            let mut fields = Vec::new();
+            
+            while !self.check(&TokenType::RightBrace) && !self.is_at_end() {
+                // 字段名
+                let field_name = if let Some(token) = self.current_token() {
+                    if let TokenType::Identifier(name) = &token.token_type {
+                        let name = name.clone();
+                        self.advance();
+                        name
+                    } else {
+                        return Err(KairoError::syntax(
+                            "期望字段名称".to_string(),
+                            token.line,
+                            token.column,
+                        ));
+                    }
+                } else {
+                    return Err(KairoError::syntax(
+                        "期望字段名称".to_string(),
+                        start_token.line,
+                        start_token.column,
+                    ));
+                };
+                
+                self.consume(TokenType::Colon, "期望 ':'")?;
+                
+                // 字段类型
+                let field_type = self.parse_type()?;
+                
+                fields.push(ErrorField {
+                    name: field_name,
+                    field_type,
+                });
+                
+                if self.check(&TokenType::Comma) {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+            
+            self.consume(TokenType::RightBrace, "期望 '}'")?;
+            Some(fields)
+        } else {
+            None
+        };
+
+        Ok(Statement {
+            kind: StatementKind::ErrorDefinition {
+                name,
+                fields,
+                error_group: None,
+            },
+            line: start_token.line,
+            column: start_token.column,
+        })
+    }
+
+    /// 解析 fail 语句
+    /// 语法：fail ErrorName 或 fail ErrorName(field: value, ...)
+    pub(crate) fn parse_fail_statement(&mut self) -> Result<Statement> {
+        let start_token = self.consume(TokenType::Fail, "期望 'fail'")?;
+        
+        // 错误名称
+        let error_name = if let Some(token) = self.current_token() {
+            if let TokenType::Identifier(name) = &token.token_type {
+                let name = name.clone();
+                self.advance();
+                name
+            } else {
+                return Err(KairoError::syntax(
+                    "期望错误名称".to_string(),
+                    token.line,
+                    token.column,
+                ));
+            }
+        } else {
+            return Err(KairoError::syntax(
+                "期望错误名称".to_string(),
+                start_token.line,
+                start_token.column,
+            ));
+        };
+
+        // 检查是否有错误数据
+        let data = if self.check(&TokenType::LeftParen) {
+            self.advance(); // consume '('
+            let mut data = Vec::new();
+            
+            while !self.check(&TokenType::RightParen) && !self.is_at_end() {
+                // 字段名
+                let field_name = if let Some(token) = self.current_token() {
+                    if let TokenType::Identifier(name) = &token.token_type {
+                        let name = name.clone();
+                        self.advance();
+                        name
+                    } else {
+                        return Err(KairoError::syntax(
+                            "期望字段名称".to_string(),
+                            token.line,
+                            token.column,
+                        ));
+                    }
+                } else {
+                    return Err(KairoError::syntax(
+                        "期望字段名称".to_string(),
+                        start_token.line,
+                        start_token.column,
+                    ));
+                };
+                
+                self.consume(TokenType::Colon, "期望 ':'")?;
+                
+                // 字段值表达式
+                let field_value = self.parse_expression()?;
+                
+                data.push((field_name, field_value));
+                
+                if self.check(&TokenType::Comma) {
+                    self.advance();
+                } else {
+                    break;
+                }
+            }
+            
+            self.consume(TokenType::RightParen, "期望 ')'")?;
+            Some(data)
+        } else {
+            None
+        };
+
+        Ok(Statement {
+            kind: StatementKind::Fail {
+                error_name,
+                data,
+            },
+            line: start_token.line,
+            column: start_token.column,
+        })
     }
 }

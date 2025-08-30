@@ -10,6 +10,6 @@ mod common;
 pub(crate) mod expression;
 pub(crate) mod statement;
 
-pub use common::{Block, MatchArm, MatchArmExpr, Parameter, Pattern, Program};
+pub use common::{Block, MatchArm, MatchArmExpr, Parameter, Pattern, Program, ErrorField, ErrorHandlerClause, ErrorHandler, CatchClause};
 pub use expression::{AssignmentOperator, BinaryOperator, Expression, UnaryOperator};
 pub use statement::{Statement, StatementKind};

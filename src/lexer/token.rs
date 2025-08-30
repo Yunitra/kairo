@@ -31,6 +31,11 @@ pub enum TokenType {
     Fun,       // fun
     Return,    // return
     Void,      // Void
+    Err,       // err - 错误定义
+    Fail,      // fail - 抛出错误
+    Try,       // try - 尝试执行
+    Catch,     // catch - 捕获错误
+    Raises,    // raises - 声明函数可能抛出的错误
 
     // 运算符
     Assign,          // =
@@ -72,6 +77,7 @@ pub enum TokenType {
     Dollar,          // $
     SafeCall,        // ?.
     Elvis,           // ?:
+    ErrorHandle,     // !: - 错误处理语法糖
 
     // 注释
     SingleComment(String),    // # 单行注释

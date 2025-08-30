@@ -138,16 +138,49 @@ impl Parser {
         self.consume(TokenType::RightParen, "期望 ')'")?;
 
         let return_type = if self.check(&TokenType::Arrow) { self.advance(); Some(self.parse_type()?) } else { None };
+        
+        // 解析 raises 子句
+        let raises = if self.check(&TokenType::Raises) {
+            self.advance(); // consume 'raises'
+            let mut error_types = Vec::new();
+            
+            loop {
+                if let Some(token) = self.current_token() {
+                    if let TokenType::Identifier(error_name) = &token.token_type {
+                        error_types.push(error_name.clone());
+                        self.advance();
+                        
+                        if self.check(&TokenType::Comma) {
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    } else {
+                        return Err(KairoError::syntax(
+                            "期望错误类型名称".to_string(),
+                            token.line,
+                            token.column,
+                        ));
+                    }
+                } else {
+                    break;
+                }
+            }
+            Some(error_types)
+        } else {
+            None
+        };
+        
         self.skip_comments_and_newlines();
 
         if self.check(&TokenType::Assign) {
             self.advance();
             let body_expr = self.parse_expression()?;
-            return Ok(Statement { kind: StatementKind::ExtensionFunction { type_name, method_name, parameters, return_type, body: None, body_expr: Some(body_expr) }, line: self.current_token().map(|t| t.line).unwrap_or(1), column: self.current_token().map(|t| t.column).unwrap_or(1) });
+            return Ok(Statement { kind: StatementKind::ExtensionFunction { type_name, method_name, parameters, return_type, body: None, body_expr: Some(body_expr), raises }, line: self.current_token().map(|t| t.line).unwrap_or(1), column: self.current_token().map(|t| t.column).unwrap_or(1) });
         } else {
             self.skip_comments_and_newlines();
             let body = self.parse_block()?;
-            return Ok(Statement { kind: StatementKind::ExtensionFunction { type_name, method_name, parameters, return_type, body: Some(body), body_expr: None }, line: self.current_token().map(|t| t.line).unwrap_or(1), column: self.current_token().map(|t| t.column).unwrap_or(1) });
+            return Ok(Statement { kind: StatementKind::ExtensionFunction { type_name, method_name, parameters, return_type, body: Some(body), body_expr: None, raises }, line: self.current_token().map(|t| t.line).unwrap_or(1), column: self.current_token().map(|t| t.column).unwrap_or(1) });
         }
     }
 
@@ -181,15 +214,48 @@ impl Parser {
         }
         self.consume(TokenType::RightParen, "期望 ')'")?;
         let return_type = if self.check(&TokenType::Arrow) { self.advance(); Some(self.parse_type()?) } else { None };
+        
+        // 解析 raises 子句
+        let raises = if self.check(&TokenType::Raises) {
+            self.advance(); // consume 'raises'
+            let mut error_types = Vec::new();
+            
+            loop {
+                if let Some(token) = self.current_token() {
+                    if let TokenType::Identifier(error_name) = &token.token_type {
+                        error_types.push(error_name.clone());
+                        self.advance();
+                        
+                        if self.check(&TokenType::Comma) {
+                            self.advance();
+                        } else {
+                            break;
+                        }
+                    } else {
+                        return Err(KairoError::syntax(
+                            "期望错误类型名称".to_string(),
+                            token.line,
+                            token.column,
+                        ));
+                    }
+                } else {
+                    break;
+                }
+            }
+            Some(error_types)
+        } else {
+            None
+        };
+        
         self.skip_comments_and_newlines();
         if self.check(&TokenType::Assign) {
             self.advance();
             let body_expr = self.parse_expression()?;
-            return Ok(Statement { kind: StatementKind::FunctionDeclaration { name, parameters, return_type, body: None, body_expr: Some(body_expr) }, line: self.current_token().map(|t| t.line).unwrap_or(1), column: self.current_token().map(|t| t.column).unwrap_or(1) });
+            return Ok(Statement { kind: StatementKind::FunctionDeclaration { name, parameters, return_type, body: None, body_expr: Some(body_expr), raises }, line: self.current_token().map(|t| t.line).unwrap_or(1), column: self.current_token().map(|t| t.column).unwrap_or(1) });
         } else {
             self.skip_comments_and_newlines();
             let body = self.parse_block()?;
-            return Ok(Statement { kind: StatementKind::FunctionDeclaration { name, parameters, return_type, body: Some(body), body_expr: None }, line: self.current_token().map(|t| t.line).unwrap_or(1), column: self.current_token().map(|t| t.column).unwrap_or(1) });
+            return Ok(Statement { kind: StatementKind::FunctionDeclaration { name, parameters, return_type, body: Some(body), body_expr: None, raises }, line: self.current_token().map(|t| t.line).unwrap_or(1), column: self.current_token().map(|t| t.column).unwrap_or(1) });
         }
     }
 

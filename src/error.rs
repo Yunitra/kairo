@@ -19,6 +19,8 @@ pub enum ErrorKind {
     TypeError,
     RuntimeError,
     IoError,
+    /// An internal signal to propagate control flow changes, not a user-facing error.
+    ControlFlowSignal(super::interpreter::ControlFlow),
 }
 
 impl KairoError {
@@ -52,6 +54,10 @@ impl KairoError {
     pub fn runtime(message: String, line: usize, column: usize) -> Self {
         Self::new(ErrorKind::RuntimeError, message, line, column)
     }
+
+    pub fn control_flow_signal(control_flow: super::interpreter::ControlFlow, message: &str) -> Self {
+        Self::new(ErrorKind::ControlFlowSignal(control_flow), message.to_string(), 0, 0)
+    }
 }
 
 impl fmt::Display for KairoError {
@@ -62,7 +68,15 @@ impl fmt::Display for KairoError {
             ErrorKind::TypeError => "类型错误".red(),
             ErrorKind::RuntimeError => "运行时错误".red(),
             ErrorKind::IoError => "IO错误".red(),
+            
+            // 此变体仅供内部使用，不应展示给用户
+            ErrorKind::ControlFlowSignal(_) => "内部控制流错误".bright_black(),
         };
+
+        // 对于内部控制流错误，不打印源代码行
+        if matches!(self.kind, ErrorKind::ControlFlowSignal(_)) {
+            return write!(f, "{}: {}", error_type, self.message);
+        }
 
         writeln!(f, "{}: {}", error_type, self.message)?;
         writeln!(f, "  --> 第{}行，第{}列", self.line, self.column)?;

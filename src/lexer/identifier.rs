@@ -42,6 +42,11 @@ impl super::Lexer {
             "fun" => TokenType::Fun,
             "return" => TokenType::Return,
             "Void" => TokenType::Void,
+            "err" => TokenType::Err,
+            "fail" => TokenType::Fail,
+            "try" => TokenType::Try,
+            "catch" => TokenType::Catch,
+            "raises" => TokenType::Raises,
             // 类型名也允许作为标识符出现（交给 parser 处理具体含义）
             "List" => TokenType::Identifier(identifier),
             "Map" => TokenType::Identifier(identifier),

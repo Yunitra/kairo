@@ -6,8 +6,9 @@ use std::collections::HashMap;
 
 use crate::ast::{Expression, AssignmentOperator, BinaryOperator, UnaryOperator};
 use crate::ast::expression::ExpressionKind;
-use crate::error::{KairoError, Result};
+use crate::error::{KairoError, Result, ErrorKind};
 use crate::types::{KairoType, KairoValue};
+use super::ControlFlow;
 
 impl super::Interpreter {
     pub(super) fn evaluate_expression(&mut self, expression: Expression) -> Result<KairoValue> {
@@ -18,7 +19,9 @@ impl super::Interpreter {
             }
             ExpressionKind::Binary { left, operator, right } => { let left_val = self.evaluate_expression(*left)?; let right_val = self.evaluate_expression(*right)?; self.apply_binary_operator(operator, left_val, right_val, expression.line, expression.column) }
             ExpressionKind::Unary { operator, operand } => { let operand_val = self.evaluate_expression(*operand)?; self.apply_unary_operator(operator, operand_val, expression.line, expression.column) }
-            ExpressionKind::FunctionCall { name, arguments } => { self.call_function(name, arguments, expression.line, expression.column) }
+            ExpressionKind::FunctionCall { name, arguments } => {
+                self.call_function(name, arguments, expression.line, expression.column)
+            }
             ExpressionKind::MethodCall { object, method, arguments } => {
                 let object_value = self.evaluate_expression(*object)?;
                 let object_type = object_value.get_type();
@@ -166,6 +169,152 @@ impl super::Interpreter {
                     self.evaluate_expression(*then_expr)
                 } else {
                     self.evaluate_expression(*else_expr)
+                }
+            }
+            ExpressionKind::BlockExpr(block) => {
+                // 执行 Block 表达式，返回最后一个表达式的值
+                self.push_scope();
+                let mut last_value = KairoValue::Unit;
+                
+                for statement in &block.statements {
+                    match &statement.kind {
+                        crate::ast::StatementKind::Expression(expr) => {
+                            last_value = self.evaluate_expression(expr.clone())?;
+                        }
+                        _ => {
+                            self.execute_statement(statement.clone())?;
+                        }
+                    }
+                }
+                
+                self.pop_scope();
+                Ok(last_value)
+            }
+            ExpressionKind::TryCatch { try_expr, catch_clauses, default_catch } => {
+                // 执行 try 表达式
+                let result = self.evaluate_expression(*try_expr);
+                
+                match result {
+                    Ok(value) => Ok(value),
+                    Err(e) => {
+                        // 只处理控制流错误
+                        if let ErrorKind::ControlFlowSignal(ref control_flow) = e.kind {
+                            if let ControlFlow::ThrownError { .. } = control_flow {
+                                // 检查是否有相关的 catch 子句
+                                for catch_clause in catch_clauses {
+                                    if self.error_handling.is_control_flow_error_match(control_flow, &catch_clause.error_type) {
+                                        if let Some(variable) = &catch_clause.variable {
+                                            self.push_scope();
+                                            let error_value = self.error_handling.create_error_value_from_control_flow(control_flow, &catch_clause.error_type);
+                                            self.set_variable(variable.clone(), error_value, false, expression.line, expression.column)?;
+                                            let result = self.evaluate_expression(*catch_clause.handler.clone());
+                                            self.pop_scope();
+                                            // 成功捕获错误后，重置控制流状态
+                                            self.control_flow = super::ControlFlow::None;
+                                            return result;
+                                        } else {
+                                            let result = self.evaluate_expression(*catch_clause.handler.clone());
+                                            // 成功捕获错误后，重置控制流状态
+                                            self.control_flow = super::ControlFlow::None;
+                                            return result;
+                                        }
+                                    }
+                                }
+                                
+                                // 如果有默认 catch，使用它
+                                if let Some(default_handler) = default_catch {
+                                    let result = self.evaluate_expression(*default_handler);
+                                    // 成功捕获错误后，重置控制流状态
+                                    self.control_flow = super::ControlFlow::None;
+                                    return result;
+                                }
+                            }
+                        }
+                        
+                        // 重新抛出未处理的错误
+                        Err(e)
+                    }
+                }
+            }
+            ExpressionKind::ErrorPropagation { expression: expr } => {
+                // 错误传播操作符 expr!
+                let result = self.evaluate_expression(*expr);
+                
+                match result {
+                    Ok(value) => {
+                        // 检查当前控制流是否有错误
+                        if let super::ControlFlow::ThrownError { error_type, error_data, line, column } = &self.control_flow {
+                            // 重新抛出错误
+                            Err(KairoError::control_flow_signal(
+                                super::ControlFlow::ThrownError {
+                                    error_type: error_type.clone(),
+                                    error_data: error_data.clone(),
+                                    line: *line,
+                                    column: *column,
+                                },
+                                "Error propagated"
+                            ))
+                        } else {
+                            Ok(value)
+                        }
+                    }
+                    Err(e) => {
+                        // 如果表达式本身返回错误，直接传播
+                        if let ErrorKind::ControlFlowSignal(ref control_flow) = e.kind {
+                            Err(KairoError::control_flow_signal(control_flow.clone(), "Error propagated"))
+                        } else {
+                            Err(e)
+                        }
+                    }
+                }
+            }
+            ExpressionKind::ErrorHandle { expression: expr, handler } => {
+                // 错误处理语法糖 expr !: handler
+                let result = self.evaluate_expression(*expr);
+                
+                match result {
+                    Ok(value) => {
+                        // 成功时重置控制流状态
+                        self.control_flow = super::ControlFlow::None;
+                        Ok(value)
+                    }
+                    Err(e) => {
+                        if let ErrorKind::ControlFlowSignal(ref control_flow) = e.kind {
+                            // 重置控制流状态
+                            self.control_flow = super::ControlFlow::None;
+                            
+                            match handler {
+                                crate::ast::ErrorHandler::Simple(handler_expr) => {
+                                    self.evaluate_expression(*handler_expr)
+                                }
+                                crate::ast::ErrorHandler::Match { clauses, default } => {
+                                    for clause in clauses {
+                                        if self.error_handling.is_control_flow_error_match(control_flow, &clause.error_type) {
+                                            if let Some(variable) = &clause.variable {
+                                                self.push_scope();
+                                                let error_value = self.error_handling.create_error_value_from_control_flow(control_flow, &clause.error_type);
+                                                self.set_variable(variable.clone(), error_value, false, expression.line, expression.column)?;
+                                                let result = self.evaluate_expression(*clause.handler.clone());
+                                                self.pop_scope();
+                                                return result;
+                                            } else {
+                                                return self.evaluate_expression(*clause.handler.clone());
+                                            }
+                                        }
+                                    }
+                                    
+                                    if let Some(default_handler) = default {
+                                        return self.evaluate_expression(*default_handler);
+                                    }
+                                    
+                                    // No handler found, re-throw
+                                    Err(e)
+                                }
+                            }
+                        } else {
+                            Err(e)
+                        }
+                    }
                 }
             }
         }

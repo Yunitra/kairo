@@ -4,7 +4,7 @@
 
 use crate::types::KairoType;
 
-use super::common::{Block, MatchArm, Parameter};
+use super::common::{Block, MatchArm, Parameter, ErrorField};
 use super::expression::Expression;
 
 #[derive(Debug, Clone)]
@@ -34,6 +34,8 @@ pub enum StatementKind {
         body: Option<Block>,
         /// 单表达式函数体（可选）
         body_expr: Option<Expression>,
+        /// 函数可能抛出的错误类型
+        raises: Option<Vec<String>>,
     },
 
     /// 扩展函数声明（Type.method）
@@ -44,6 +46,8 @@ pub enum StatementKind {
         return_type: Option<KairoType>,
         body: Option<Block>,
         body_expr: Option<Expression>,
+        /// 函数可能抛出的错误类型
+        raises: Option<Vec<String>>,
     },
 
     /// 返回语句
@@ -82,4 +86,20 @@ pub enum StatementKind {
 
     /// 独立代码块
     Block(Block),
+
+    /// 错误定义语句
+    ErrorDefinition {
+        name: String,
+        /// 可选的错误数据字段
+        fields: Option<Vec<ErrorField>>,
+        /// 错误组定义（例如：err IOErrors = FileNotFound, NetworkTimeout）
+        error_group: Option<Vec<String>>,
+    },
+
+    /// fail 语句（抛出错误）
+    Fail {
+        error_name: String,
+        /// 错误数据（可选）
+        data: Option<Vec<(String, Expression)>>,
+    },
 }

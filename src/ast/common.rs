@@ -69,3 +69,42 @@ pub struct Program {
     /// 程序的顶层语句列表
     pub statements: Vec<super::statement::Statement>,
 }
+
+#[derive(Debug, Clone)]
+pub struct ErrorField {
+    /// 错误字段名称
+    pub name: String,
+    /// 错误字段类型
+    pub field_type: KairoType,
+}
+
+#[derive(Debug, Clone)]
+pub struct CatchClause {
+    /// 要捕获的错误类型名称
+    pub error_type: String,
+    /// 错误变量名（可选，例如 catch ErrorType as e）
+    pub variable: Option<String>,
+    /// 处理错误的表达式或代码块
+    pub handler: Box<Expression>,
+}
+
+#[derive(Debug, Clone)]
+pub enum ErrorHandler {
+    /// 简单的默认值表达式
+    Simple(Box<Expression>),
+    /// 基于错误类型的匹配处理
+    Match {
+        clauses: Vec<ErrorHandlerClause>,
+        default: Option<Box<Expression>>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub struct ErrorHandlerClause {
+    /// 错误类型名称
+    pub error_type: String,
+    /// 错误变量名（可选）
+    pub variable: Option<String>,
+    /// 处理表达式
+    pub handler: Box<Expression>,
+}
