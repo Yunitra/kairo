@@ -1,0 +1,135 @@
+// SPDX-License-Identifier: Apache-2.0
+
+//! 语句执行：`execute_statement` 与 `execute_block`
+
+use crate::ast::{Statement, Expression, Block};
+use crate::error::{KairoError, Result};
+
+use crate::types::KairoValue;
+use super::{Interpreter, ControlFlow, FunctionBodyType, FunctionDef};
+
+impl Interpreter {
+    pub(super) fn execute_statement(&mut self, statement: Statement) -> Result<()> {
+        match statement {
+            Statement::VariableDeclaration { name, mutable, explicit_type, value, is_const: _ } => {
+                let computed_value = self.evaluate_expression(value)?;
+                if let Some(expected_type) = explicit_type {
+                    let actual_type = computed_value.get_type();
+                    if !self.types_match(&expected_type, &actual_type) {
+                        return Err(KairoError::type_error(
+                            format!("类型不匹配: 期望 {}, 但得到 {}", expected_type, actual_type), 1, 1,
+                        ));
+                    }
+                }
+                self.set_variable(name, computed_value, mutable)?;
+            }
+            Statement::FunctionDeclaration { name, parameters, return_type, body, body_expr, line, column } => {
+                let params: Vec<(String, crate::types::KairoType, bool, Option<Expression>, bool)> = parameters
+                    .into_iter()
+                    .map(|p| (p.name, p.param_type, p.mutable, p.default_value, p.variadic))
+                    .collect();
+                let function_body = if let Some(expr) = body_expr { FunctionBodyType::Expression(expr) } else if let Some(block) = body { FunctionBodyType::Block(block) } else { return Err(KairoError::runtime("函数必须有函数体".to_string(), line, column)); };
+                let function_def = FunctionDef { name: name.clone(), parameters: params, return_type, body: function_body, line, column };
+                self.set_function(name, function_def)?;
+            }
+            Statement::ExtensionFunction { type_name, method_name, parameters, return_type, body, body_expr, line, column } => {
+                let params: Vec<(String, crate::types::KairoType, bool, Option<Expression>, bool)> = parameters
+                    .into_iter()
+                    .map(|p| (p.name, p.param_type, p.mutable, p.default_value, p.variadic))
+                    .collect();
+                let function_body = if let Some(expr) = body_expr { FunctionBodyType::Expression(expr) } else if let Some(block) = body { FunctionBodyType::Block(block) } else { return Err(KairoError::runtime("扩展函数必须有函数体".to_string(), line, column)); };
+                let full_name = format!("{}.{}", type_name, method_name);
+                let function_def = FunctionDef { name: full_name.clone(), parameters: params, return_type, body: function_body, line, column };
+                self.set_function(full_name, function_def)?;
+            }
+            Statement::Return { value, line, column } => {
+                let return_value = if let Some(expr) = value { self.evaluate_expression(expr)? } else { KairoValue::Unit };
+                self.control_flow = ControlFlow::Return(return_value, line, column);
+            }
+            Statement::Expression(expr) => { let _ = self.evaluate_expression(expr)?; }
+            Statement::If { condition, then_branch, else_ifs, else_branch } => {
+                let condition_value = self.evaluate_expression(condition)?;
+                if condition_value.is_truthy() { self.execute_block(then_branch)?; } else {
+                    let mut executed = false;
+                    for (else_if_condition, else_if_body) in else_ifs {
+                        let else_if_value = self.evaluate_expression(else_if_condition)?;
+                        if else_if_value.is_truthy() { self.execute_block(else_if_body)?; executed = true; break; }
+                    }
+                    if !executed { if let Some(else_body) = else_branch { self.execute_block(else_body)?; } }
+                }
+            }
+            Statement::While { condition, body } => {
+                loop {
+                    let condition_value = self.evaluate_expression(condition.clone())?;
+                    if !condition_value.is_truthy() { break; }
+                    self.execute_block(body.clone())?;
+                    match &self.control_flow {
+                        ControlFlow::Break(levels) => { let levels = *levels; self.control_flow = ControlFlow::None; if levels > 1 { self.control_flow = ControlFlow::Break(levels - 1); } break; }
+                        ControlFlow::Continue => { self.control_flow = ControlFlow::None; continue; }
+                        ControlFlow::Return(_, _, _) => { break; }
+                        ControlFlow::None => {}
+                    }
+                }
+            }
+            Statement::For { variable, value_variable, iterable, body } => {
+                let iterable_value = self.evaluate_expression(iterable)?;
+                match iterable_value {
+                    KairoValue::List(items) => {
+                        for item in items {
+                            self.push_scope();
+                            self.set_variable(variable.clone(), item, false)?;
+                            self.execute_block(body.clone())?;
+                            let should_break = match &self.control_flow {
+                                ControlFlow::Break(levels) => { let levels = *levels; self.control_flow = ControlFlow::None; if levels > 1 { self.control_flow = ControlFlow::Break(levels - 1); } true }
+                                ControlFlow::Continue => { self.control_flow = ControlFlow::None; false }
+                                ControlFlow::Return(_, _, _) => { true }
+                                ControlFlow::None => false,
+                            };
+                            self.pop_scope();
+                            if should_break { break; }
+                        }
+                    }
+                    KairoValue::Map(map) => {
+                        for (key, value) in map {
+                            self.push_scope();
+                            self.set_variable(variable.clone(), KairoValue::Text(key), false)?;
+                            if let Some(value_var) = &value_variable { self.set_variable(value_var.clone(), value, false)?; }
+                            self.execute_block(body.clone())?;
+                            let should_break = match &self.control_flow {
+                                ControlFlow::Break(levels) => { let levels = *levels; self.control_flow = ControlFlow::None; if levels > 1 { self.control_flow = ControlFlow::Break(levels - 1); } true }
+                                ControlFlow::Continue => { self.control_flow = ControlFlow::None; false }
+                                ControlFlow::Return(_, _, _) => { true }
+                                ControlFlow::None => false,
+                            };
+                            self.pop_scope();
+                            if should_break { break; }
+                        }
+                    }
+                    _ => { return Err(KairoError::type_error("for 循环只能遍历 List 或 Map".to_string(), 1, 1)); }
+                }
+            }
+            Statement::Match { value, arms } => {
+                let match_value = self.evaluate_expression(value)?;
+                for arm in arms {
+                    if self.pattern_matches(&arm.pattern, &match_value)? {
+                        self.push_scope();
+                        self.bind_pattern_variables(&arm.pattern, &match_value)?;
+                        if let Some(guard) = arm.guard { let guard_value = self.evaluate_expression(guard)?; if !guard_value.is_truthy() { self.pop_scope(); continue; } }
+                        self.execute_block(arm.body)?;
+                        self.pop_scope();
+                        break;
+                    }
+                }
+            }
+            Statement::Break { levels } => { self.control_flow = ControlFlow::Break(levels.unwrap_or(1)); }
+            Statement::Continue => { self.control_flow = ControlFlow::Continue; }
+            Statement::Block(block) => { self.push_scope(); self.execute_block(block)?; self.pop_scope(); }
+        }
+        Ok(())
+    }
+
+    pub(super) fn execute_block(&mut self, block: Block) -> Result<()> {
+        for statement in block.statements { self.execute_statement(statement)?; if !matches!(self.control_flow, ControlFlow::None) { break; } }
+        Ok(())
+    }
+}
